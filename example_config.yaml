@@ -1,0 +1,16 @@
+defaults:  
+  - _self_  
+  - override hydra/hydra_logging: disabled  
+  - override hydra/job_logging: disabled  
+  
+hydra:  
+  output_subdir: null  
+  run:  
+    dir: .
+
+file_path: '/home/sebalzer/Documents/Myo_London/Myo_London.xlsx'
+
+# 1. copy this file and rename new file to config.yaml
+# 2. change the file_path in config.yaml to the correct file path on your current device
+# 3. run main.py
+# 4. cleaned file will be saved at same file path as <file name>_cleaned.xlsx
