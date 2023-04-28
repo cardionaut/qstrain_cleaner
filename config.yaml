@@ -9,4 +9,4 @@ hydra:
     dir: .
 
 root_dir: '/home/sebalzer/Documents/TAVI_CT/KARD_IMAGING/CT Strain Zoe/'
-out_file: '/home/sebalzer/Documents/TAVI_CT/KARD_IMAGING/CT Strain Zoe/ScreeningListe Zoe Export.xlsx'
+out_path: '/home/sebalzer/Documents/TAVI_CT/KARD_IMAGING/CT Strain Zoe/ScreeningListe Zoe Export.xlsx'

@@ -16,6 +16,7 @@ jupyter = "^1.0.0"
 notebook = "^6.4.12"
 omegaconf = "^2.2"
 xlsxwriter = "^3.0.7"
+pypdf = "^3.8.1"
 
 [tool.poetry.group.dev.dependencies]
 autohooks = "^23.1.0"
