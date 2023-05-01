@@ -1,6 +1,8 @@
 import os
+import glob
 import pypdf
 import re
+import lxml
 
 import pandas as pd
 import numpy as np
@@ -18,6 +20,7 @@ class Cleaner:
         for patient in self.patients:
             first_name, last_name, row = self.split_name(patient)
             row = self.read_pdf(patient, row)
+            row = self.read_main(patient, row)
 
             self.out_file[(self.out_file['First_name'] == first_name) & (self.out_file['Name'] == last_name)] = row
 
@@ -57,7 +60,7 @@ class Cleaner:
             logger.warning(f'Non-unique patient {first_name} {last_name}.')
 
         return first_name, last_name, row
-    
+
     def permute_name(self, first_name, last_name, counter):
         """Permute names until match is found in out_file"""
         if counter == 0:  # try using only first first_name
@@ -77,7 +80,7 @@ class Cleaner:
 
         return first_name, last_name
 
-    def read_pdf(self, patient, row) -> None:
+    def read_pdf(self, patient, row):
         """Read pdf report and store data in out_file"""
         if Path(os.path.join(self.root, patient, 'Results', 'Report.pdf')).is_file():
             reader = pypdf.PdfReader(os.path.join(self.root, patient, 'Results', 'Report.pdf'))
@@ -113,7 +116,25 @@ class Cleaner:
         row['edv/bsa_ml/m2_report'] = text[text.index('EDV/BSA') + 1]
 
         return row
-    
-    def read_main(self, patient, row) -> None:
-        pass
 
+    def read_main(self, patient, row):
+        """Read all (MAIN-..) files and store data in out-file"""
+        ac_list = list(Path(self.root, patient).rglob('*(MAIN-a?c)*.txt'))
+        if len(ac_list) != 1:
+            logger.warning(f'LV LAX file not available or not unique for patient {patient}')
+        else:
+            ac_data = pd.read_csv(
+                ac_list[0],
+                sep='\t',
+                header=None,
+                names=['key', 'value', 'ignore_1', 'ignore_2'],
+                on_bad_lines='skip',
+                skip_blank_lines=True,
+                engine='python',
+            )
+            ac_data = ac_data[['key', 'value']].dropna(how='any')
+            index_of_interest = ac_data.index[ac_data['key'] == 'Average']
+            
+
+    def read_segmental(self, patient, row):
+        pass
