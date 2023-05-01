@@ -16,15 +16,16 @@ class Cleaner:
 
     def __call__(self) -> pd.DataFrame:
         for patient in self.patients:
-            first_name, last_name = self.split_name(patient)
-            logger.debug(f'{patient}: {first_name} _ {last_name}')
-            self.read_pdf(patient, first_name, last_name)
+            first_name, last_name, row = self.split_name(patient)
+            row = self.read_pdf(patient, row)
+
+            self.out_file[(self.out_file['First_name'] == first_name) & (self.out_file['Name'] == last_name)] = row
 
         return self.out_file
 
     def split_name(self, patient):
-        regex = re.compile(u'[^a-zA-Z\'-] + ')
-        cleaned_patient = regex.sub('', patient)
+        regex = re.compile(u"[^a-zA-Z'-] +")
+        cleaned_patient = regex.sub(' ', patient).strip()
         name_list = cleaned_patient.split(sep=' ')
 
         if len(name_list) == 2:
@@ -42,11 +43,41 @@ class Cleaner:
             last_name = name_list[0]
 
         # check names in out_file
-        
+        row = self.out_file.query('Name == @last_name & First_name == @first_name').copy()
+        try_counter = 0
+        tmp_first, tmp_last = first_name, last_name
+        while row.empty:  # name not found
+            first_name, last_name = self.permute_name(tmp_first, tmp_last, try_counter)
+            if tmp_first == first_name and tmp_last == last_name:  # all permutations tested
+                break
+            row = self.out_file.query('Name == @last_name & First_name == @first_name').copy()
+            try_counter += 1
+
+        if len(row.index) > 1:
+            logger.warning(f'Non-unique patient {first_name} {last_name}.')
+
+        return first_name, last_name, row
+    
+    def permute_name(self, first_name, last_name, counter):
+        """Permute names until match is found in out_file"""
+        if counter == 0:  # try using only first first_name
+            first_name = first_name.split(sep=' ')[0]
+        elif counter == 1:  # try using only second first_name
+            first_name = first_name.split(sep=' ')[1]
+        elif counter == 2:  # try using only first first_name (with -)
+            first_name = first_name.split(sep='-')[0]
+        elif counter == 3:  # try using only second first_name (with -)
+            first_name = first_name.split(sep='-')[1]
+        elif counter == 4:
+            first_name = '-'.join(first_name.split(sep=' '))
+        elif counter == 5:
+            first_name = ' '.join(first_name.split(sep='-'))
+        else:
+            logger.warning(f'Patient {first_name} {last_name} not found.')
 
         return first_name, last_name
 
-    def read_pdf(self, patient, first_name, last_name) -> None:
+    def read_pdf(self, patient, row) -> None:
         """Read pdf report and store data in out_file"""
         if Path(os.path.join(self.root, patient, 'Results', 'Report.pdf')).is_file():
             reader = pypdf.PdfReader(os.path.join(self.root, patient, 'Results', 'Report.pdf'))
@@ -61,3 +92,28 @@ class Cleaner:
             return
 
         text = reader.pages[0].extract_text().split(sep='\n')
+        # Extract values from pdf
+        try:
+            row['Date_CT'] = text[text.index('Report date/time:') + 1].split(' ')[0]
+            row['weight_kg_report'] = text[text.index('Patient weight') + 1]
+            row['hf_bpm_report'] = text[text.index('Heart rate') + 1]
+            row['height_cm_report'] = text[text.index('Patient height') + 1]
+            row['edmass_g_report'] = text[text.index('ED mass') + 1]
+            row['edmass/bsa_g/m2_report'] = text[text.index('ED Mass/BSA') + 1]
+        except ValueError:
+            row['Date_CT'] = text[text.index('Datum/Uhrzeit des Berichts:') + 1].split(' ')[0]
+            row['weight_kg_report'] = text[text.index('Gewicht des Patienten') + 1]
+            row['hf_bpm_report'] = text[text.index('Herzfrequenz') + 1]
+            row['height_cm_report'] = text[text.index('Größe des Patienten') + 1]
+            row['edmass_g_report'] = text[text.index('ED Masse') + 1]
+            row['edmass/bsa_g/m2_report'] = text[text.index('ED-Masse/BSA') + 1]
+
+        row['bsa_m2_report'] = text[text.index('BSA') + 1]
+        row['edv_ml_report'] = text[text.index('EDV') + 1]
+        row['edv/bsa_ml/m2_report'] = text[text.index('EDV/BSA') + 1]
+
+        return row
+    
+    def read_main(self, patient, row) -> None:
+        pass
+
