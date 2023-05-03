@@ -1,12 +1,13 @@
 import os
 import pypdf
 import re
+import unicodedata
 
 import pandas as pd
 import numpy as np
 from loguru import logger
 from pathlib import Path
-import unicodedata
+from tqdm.contrib import tzip
 
 
 class Cleaner:
@@ -22,18 +23,34 @@ class Cleaner:
             unicodedata.normalize('NFKD', pat).encode('ascii', errors='ignore').decode('utf-8')
             for pat in self.patient_dirs
         ]  # remove any umlauts and accents
+        self.no_results_dir = []
+        self.non_unique = []
+        self.not_found = []
+        self.missing_data = []
 
     def __call__(self) -> pd.DataFrame:
-        for patient, patient_dir in zip(self.patients, self.patient_dirs):
+        for patient, patient_dir in tzip(self.patients, self.patient_dirs):
             file_list = list(Path(self.root, patient_dir).rglob('[R|r]esults'))
             if not file_list:
-                logger.info(f'No Results directory found for patient {patient_dir}, skipping...')
+                # logger.info(f'No Results directory found for patient {patient_dir}, skipping...')
+                self.no_results_dir.append(patient_dir)
                 continue
             first_name, last_name, row = self.split_name(patient)
             row = self.read_pdf(patient_dir, row)
             row = self.read_main(patient_dir, row)
+            row = self.read_segmental(patient_dir, row)
 
             self.out_file[(self.out_file['First_name'] == first_name) & (self.out_file['Name'] == last_name)] = row
+            
+        # some info output regarding missing data and non-unique patients
+        list_to_print = '\n'.join(self.no_results_dir)
+        logger.info(f'\nPatients without results dir:\n\n{list_to_print}')
+        list_to_print = '\n'.join(self.non_unique)
+        logger.info(f'\nNon-unique patients:\n\n{list_to_print}')
+        list_to_print = '\n'.join(self.not_found)
+        logger.info(f'\nPatients which could not be found in out_file:\n\n{list_to_print}')
+        list_to_print = '\n'.join(self.missing_data)
+        logger.info(f'\nPatients missing data:\n\n{list_to_print}')
 
         return self.out_file
 
@@ -67,7 +84,8 @@ class Cleaner:
             row = self.out_file.query('Name == @last_name & First_name == @first_name').copy()
             try_counter += 1
         if len(row.index) > 1:
-            logger.warning(f'Non-unique patient {first_name} {last_name}.')
+            # logger.warning(f'Non-unique patient {first_name} {last_name}.')
+            self.non_unique.append(patient)
 
         return first_name, last_name, row
 
@@ -93,7 +111,8 @@ class Cleaner:
         elif counter == 5:
             first_name = ' '.join(first_name.split(sep='-'))
         else:
-            logger.warning(f'Patient {first_name} {last_name} not found.')
+            # logger.warning(f'Patient {first_name} {last_name} not found.')
+            self.not_found.append(f'{first_name} {last_name}')
             failure = True
 
         return first_name, last_name, failure
@@ -102,7 +121,8 @@ class Cleaner:
         """Read pdf report and store data in out_file"""
         file_list = list(Path(self.root, patient_dir).rglob('[R|r]esults/*t.pdf'))
         if not file_list:
-            logger.info(f'No Report.pdf found for patient {patient_dir}, skipping...')
+            # logger.info(f'No Report.pdf found for patient {patient_dir}, skipping...')
+            self.missing_data.append(f'{patient_dir} (Report.pdf)')
             return row
 
         reader = pypdf.PdfReader(file_list[0])
@@ -154,14 +174,15 @@ class Cleaner:
             'LA': 'LA_edv_ml',
             'RV': 'RV_eda_cm2',
             'LV_SAX': 'LV_SAX_eda_cm2_average',
-        }  # name of start col in out_file of each block 
+        }  # name of start col in out_file of each block
         files_read = []
 
         for region in regexes.keys():
             file_list = list(Path(self.root, patient_dir).rglob(regexes[region]))
             file_list = [file for file in file_list if file not in files_read]  # for LV_SAX
             if not file_list:
-                logger.warning(f'{region} file not available for patient {patient_dir}: {file_list}')
+                # logger.warning(f'{region} file not available for patient {patient_dir}')
+                self.missing_data.append(f'{patient_dir} (MAIN) ({region})')
             else:
                 files_read.append(file_list[0])
                 region_data = pd.read_csv(
@@ -182,5 +203,41 @@ class Cleaner:
 
         return row
 
-    def read_segmental(self, patient, row):
-        pass
+    def read_segmental(self, patient_dir, row):
+        file_list = list(Path(self.root, patient_dir).rglob('*(SEGMENTAL)*.txt'))
+        if not file_list:
+            # logger.warning(f'No segmental data found for patient {patient_dir}')
+            self.missing_data.append(f'{patient_dir} (SEGMENTAL)')
+            return row
+
+        value_cols = [f'value_{i}' for i in range(1, 17)]
+        start_cols = {'16)': 'RENDO_V_TTP_1', '17)': 'LENDO_V_TTP_1'}
+        for file in file_list:
+            data = pd.read_csv(
+                file,
+                sep='\t',
+                header=None,
+                names=['segment'] + value_cols,
+                on_bad_lines='skip',
+                skip_blank_lines=True,
+                engine='python',
+            )
+            data = data.dropna(axis=0, subset=['segment']).reset_index()
+            start_rows = data.index[data['segment'].str.startswith('1)')][:6]
+            end_rows = data.index[data['segment'].str.startswith('17)')][:6]
+            if len(end_rows) > 0:  # 17 segment file detected
+                start_col = row.columns.get_loc(start_cols['17)'])
+                col_increase = 17
+            else:  # 16 segment file
+                start_col = row.columns.get_loc(start_cols['16)'])
+                col_increase = 16
+                end_rows = data.index[data['segment'].str.startswith('16)')]
+            col_counter = 0
+            for start, end in zip(start_rows, end_rows):
+                for col in range(2, len(value_cols) + 2):
+                    row.iloc[:, start_col + col_counter : start_col + col_counter + col_increase] = data.iloc[
+                        start : end + 1, col
+                    ]
+                    col_counter += col_increase
+
+        return row
