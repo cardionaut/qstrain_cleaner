@@ -9,4 +9,6 @@ hydra:
     dir: .
 
 root_dir: '/home/sebalzer/Documents/TAVI_CT/KARD_IMAGING/CT Strain Zoe/'
-out_path: '/home/sebalzer/Documents/TAVI_CT/KARD_IMAGING/CT Strain Zoe/ScreeningListe Zoe Export.xlsx'
+in_path: '/home/sebalzer/Documents/TAVI_CT/KARD_IMAGING/CT Strain Zoe/ScreeningListe Zoe Export.xlsx'
+out_path: '/home/sebalzer/Documents/TAVI_CT/KARD_IMAGING/CT Strain Zoe/ScreeningListeZoeFilled.xlsx'
+out_path_cleaned: '/home/sebalzer/Documents/TAVI_CT/KARD_IMAGING/CT Strain Zoe/ScreeningListeZoeFilledCleaned.xlsx'

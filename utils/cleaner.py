@@ -11,12 +11,12 @@ from tqdm.contrib import tzip
 
 
 class Cleaner:
-    def __init__(self, root, out_path) -> None:
+    def __init__(self, root, in_path) -> None:
         self.root = root
         self.patient_dirs = [f.name for f in os.scandir(self.root) if f.is_dir()]
-        self.out_file = pd.read_excel(out_path, sheet_name='SPSS Export (2)')
+        self.new_data = pd.read_excel(in_path, sheet_name='SPSS Export (2)')
         name_cols = ['Name', 'First_name']
-        self.out_file[name_cols] = self.out_file[name_cols].apply(
+        self.new_data[name_cols] = self.new_data[name_cols].apply(
             lambda x: x.str.normalize('NFKD').str.encode('ascii', errors='ignore').str.decode('utf-8')
         )  # remove any umlauts and accents
         self.patients = [
@@ -40,8 +40,17 @@ class Cleaner:
             row = self.read_main(patient_dir, row)
             row = self.read_segmental(patient_dir, row)
 
-            self.out_file[(self.out_file['First_name'] == first_name) & (self.out_file['Name'] == last_name)] = row
-            
+            self.new_data[(self.new_data['First_name'] == first_name) & (self.new_data['Name'] == last_name)] = row
+
+        cols = self.new_data.columns[6:]  # first couple columns are already filled
+        self.new_data[cols] = self.new_data[cols].apply(
+            pd.to_numeric, errors='coerce'
+        )  # Replace non-numeric entries with NaN
+
+        # for cleaned file: remove all patients without any data
+        new_data_cleaned = self.new_data.copy(deep=True)
+        new_data_cleaned = new_data_cleaned.dropna(subset=cols, how='all', axis=0)
+
         # some info output regarding missing data and non-unique patients
         list_to_print = '\n'.join(self.no_results_dir)
         logger.info(f'\nPatients without results dir:\n\n{list_to_print}')
@@ -52,7 +61,7 @@ class Cleaner:
         list_to_print = '\n'.join(self.missing_data)
         logger.info(f'\nPatients missing data:\n\n{list_to_print}')
 
-        return self.out_file
+        return self.new_data, new_data_cleaned
 
     def split_name(self, patient):
         regex = re.compile(u"[^a-zA-Z'-] +")
@@ -74,23 +83,24 @@ class Cleaner:
             last_name = name_list[0]
 
         # check names in out_file
-        row = self.out_file.query('Name == @last_name & First_name == @first_name').copy()
+        row = self.new_data.query('Name == @last_name & First_name == @first_name').copy()
         try_counter = 0
         tmp_first, tmp_last = first_name, last_name
         while row.empty:  # name not found
             first_name, last_name, failure = self.permute_name(tmp_first, tmp_last, try_counter)
             if failure:  # all name permutations tested, none fit
                 break
-            row = self.out_file.query('Name == @last_name & First_name == @first_name').copy()
+            row = self.new_data.query('Name == @last_name & First_name == @first_name').copy()
             try_counter += 1
         if len(row.index) > 1:
             # logger.warning(f'Non-unique patient {first_name} {last_name}.')
             self.non_unique.append(patient)
+            row = row.iloc[[0]]
 
         return first_name, last_name, row
 
     def permute_name(self, first_name, last_name, counter):
-        """Permute names until match is found in out_file"""
+        """Permute names until match is found in new_data"""
         failure = False
         if counter == 0:  # try using only first first_name
             first_name = first_name.split(sep=' ')[0]
@@ -118,7 +128,7 @@ class Cleaner:
         return first_name, last_name, failure
 
     def read_pdf(self, patient_dir, row):
-        """Read pdf report and store data in out_file"""
+        """Read pdf report and store data in new_data"""
         file_list = list(Path(self.root, patient_dir).rglob('[R|r]esults/*t.pdf'))
         if not file_list:
             # logger.info(f'No Report.pdf found for patient {patient_dir}, skipping...')
@@ -150,7 +160,7 @@ class Cleaner:
         return row
 
     def read_main(self, patient_dir, row):
-        """Read all (MAIN-..) files and store data in out_file"""
+        """Read all (MAIN-..) files and store data in new_data"""
         regexes = {
             'LV_LAX': '*(MAIN-a?c)*.txt',
             'LA': '*(MAIN-atrium)*.txt',
