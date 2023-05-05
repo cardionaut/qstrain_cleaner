@@ -47,9 +47,12 @@ class Cleaner:
             pd.to_numeric, errors='coerce'
         )  # Replace non-numeric entries with NaN
 
-        # for cleaned file: remove all patients without any data
+        # for cleaned file
         new_data_cleaned = self.new_data.copy(deep=True)
-        new_data_cleaned = new_data_cleaned.dropna(subset=cols, how='all', axis=0)
+        new_data_cleaned = new_data_cleaned.replace(0, np.nan)  # replace 0 with NaN
+        new_data_cleaned = new_data_cleaned.dropna(
+            subset=cols, how='all', axis=0
+        )  # remove all patients without any data
 
         # some info output regarding missing data and non-unique patients
         list_to_print = '\n'.join(self.no_results_dir)
